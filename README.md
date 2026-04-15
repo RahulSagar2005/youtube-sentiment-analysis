@@ -10,3 +10,6 @@ dvc dag
 
 ## AWS 
 aws configure
+
+ecr uri 
+703705584004.dkr.ecr.us-east-1.amazonaws.com/mlproj

@@ -1,23 +1,30 @@
-import matplotlib 
+import matplotlib
 matplotlib.use('Agg')
-from flask import Flask, request, jsonify, send_file 
-from flask_cors import CORS 
-import io 
-import matplotlib.pyplot as plt 
-from wordcloud import WordCloud 
-import mlflow 
-import numpy as np 
+from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
+import io
+import matplotlib.pyplot as plt
+from wordcloud import WordCloud
+import mlflow
+import numpy as np
 import re
-import pandas as pd 
+import pandas as pd
 from nltk.corpus import stopwords
-from nltk.stem import WordNetLemmatizer 
+from nltk.stem import WordNetLemmatizer
 from mlflow.tracking import MlflowClient
 import matplotlib.dates as mdates
 import pickle
 import json
+import os
 
 app = Flask(__name__)
 CORS(app)
+
+# Download NLTK data on startup
+import nltk
+nltk.download('stopwords', quiet=True)
+nltk.download('wordnet', quiet=True)
+nltk.download('punkt', quiet=True)
 
 STOP_WORDS = set(stopwords.words('english')) - {'not', 'but', 'however', 'no', 'yet'}
 lemmatizer = WordNetLemmatizer()
@@ -41,7 +48,9 @@ def preprocess_comment(comment):
 def load_model_and_vectorizer(vectorizer_path):
     """Load the model using run_id from experiment_info.json and vectorizer from local file."""
     try:
-        mlflow.set_tracking_uri("http://ec2-98-93-179-250.compute-1.amazonaws.com:5000/")
+        # Get MLflow tracking URI from environment variable (set in Docker) or use default
+        mlflow_uri = os.environ.get('MLFLOW_TRACKING_URI', 'http://localhost:5000')
+        mlflow.set_tracking_uri(mlflow_uri)
 
         with open('experiment_info.json', 'r') as f:
             model_info = json.load(f)
@@ -59,16 +68,17 @@ def load_model_and_vectorizer(vectorizer_path):
         return model, vectorizer
 
     except FileNotFoundError:
-        print("experiment_info.json not found — run the DVC pipeline first")
+        print("experiment_info.json not found - run the DVC pipeline first")
         raise
     except KeyError:
-        print("run_id not found in experiment_info.json — check the file contents")
+        print("run_id not found in experiment_info.json - check the file contents")
         raise
     except Exception as e:
         print(f"Error loading model or vectorizer: {e}")
         raise
 
 
+# Load model and vectorizer at startup
 model, vectorizer = load_model_and_vectorizer('tfidf_vectorizer.pkl')
 
 
@@ -77,9 +87,15 @@ def home():
     return "Welcome to the YouTube Sentiment Analysis API! Use the /predict endpoint to analyze comments."
 
 
-# ✅ FIXED: handles both plain strings AND dicts {text, timestamp} from popup.js
+@app.route('/health')
+def health():
+    """Health check endpoint for Docker containers."""
+    return jsonify({'status': 'healthy', 'model_loaded': model is not None})
+
+
 @app.route('/predict', methods=['POST'])
 def predict():
+    """Predict sentiment for comments. Handles both plain strings and dicts with text/timestamp."""
     data = request.get_json()
     comments_input = data.get('comments')
     print("Received comments input type:", type(comments_input))
@@ -108,7 +124,6 @@ def predict():
     except Exception as e:
         return jsonify({'error': f'Error during prediction: {e}'}), 500
 
-    # ✅ Returns comment + sentiment + timestamp so popup can use timestamp for trend graph
     response = [
         {
             "comment": comment,
@@ -122,6 +137,7 @@ def predict():
 
 @app.route('/predict_with_timestamps', methods=['POST'])
 def predict_with_timestamps():
+    """Predict sentiment for comments with timestamps."""
     data = request.get_json()
     comments_data = data.get('comments')
     if not comments_data:
@@ -149,6 +165,7 @@ def predict_with_timestamps():
 
 @app.route('/generate_chart', methods=['POST'])
 def generate_chart():
+    """Generate a pie chart showing sentiment distribution."""
     try:
         data = request.get_json()
         sentiment_counts = data.get('sentiment_counts')
@@ -189,6 +206,7 @@ def generate_chart():
 
 @app.route('/generate_wordcloud', methods=['POST'])
 def generate_wordcloud():
+    """Generate a word cloud from comments."""
     try:
         data = request.get_json()
         comments = data.get('comments')
@@ -217,6 +235,7 @@ def generate_wordcloud():
 
 @app.route('/generate_trend_graph', methods=['POST'])
 def generate_trend_graph():
+    """Generate a trend graph showing sentiment over time."""
     try:
         data = request.get_json()
         sentiment_data = data.get('sentiments')
@@ -275,4 +294,6 @@ def generate_trend_graph():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000, debug=True, use_reloader=False)
+    # For Docker: bind to 0.0.0.0 and use port from environment or default to 5000
+    port = int(os.environ.get('PORT', 8000))
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)

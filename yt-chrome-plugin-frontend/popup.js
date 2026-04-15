@@ -1,7 +1,7 @@
 document.addEventListener("DOMContentLoaded", async () => {
     const outputDiv = document.getElementById("output");
     const API_KEY = 'AIzaSyD6zn4W7Ql24xF3yzhtI6sN1lTjFunwJm0';
-    const API_URL = "http://localhost:5000";
+    const API_URL = "http://127.0.0.1:8000";
 
     // Fetch comments from YouTube Data API
     async function fetchComment(videoID) {
