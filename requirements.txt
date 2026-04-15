@@ -3,8 +3,8 @@ Flask==3.0.3
 Flask-Cors==5.0.0
 joblib==1.4.2
 lightgbm==4.5.0
-matplotlib==3.9.2
-mlflow==3.11.1
+matplotlib==3.8.4 
+mlflow==2.11.3 
 dvc==3.53.0
 dvc[s3]
 nltk==3.9.1
