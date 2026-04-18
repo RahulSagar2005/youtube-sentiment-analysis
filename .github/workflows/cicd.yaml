@@ -62,7 +62,7 @@ jobs:
   continuous-deployment:
     name: Continuous Deployment
     needs: build-and-push-ecr-image
-    runs-on: ubuntu-latest
+    runs-on: self-hosted   # ✅ changed from ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -80,7 +80,7 @@ jobs:
 
       - name: Pull Latest Image from Amazon ECR
         run: |
-          docker pull ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest
+          docker pull ${{ secrets.AWS_ECR_LOGIN_URI }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest
 
       - name: Stop and Remove Container if Running
         run: |
@@ -88,8 +88,7 @@ jobs:
 
       - name: Run Docker Image to Serve Users
         run: |
-          IMAGE="${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest"
-          echo "Image resolved to: $IMAGE"
+          IMAGE="${{ secrets.AWS_ECR_LOGIN_URI }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest"
           docker run -d -p 5000:8000 --name=cnncls \
             -e AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}" \
             -e AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
