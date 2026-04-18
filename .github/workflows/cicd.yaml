@@ -59,8 +59,8 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-  continuous-deployment:         # ✅ job key at correct indent level
-    name: Continuous Deployment  # ✅ nested properly under the job
+  continuous-deployment:
+    name: Continuous Deployment
     needs: build-and-push-ecr-image
     runs-on: ubuntu-latest
     steps:
@@ -80,7 +80,7 @@ jobs:
 
       - name: Pull Latest Image from Amazon ECR
         run: |
-          docker pull ${{ secrets.AWS_ECR_LOGIN_URI }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest
+          docker pull ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest
 
       - name: Stop and Remove Container if Running
         run: |
@@ -94,7 +94,7 @@ jobs:
             -e AWS_REGION=${{ secrets.AWS_REGION }} \
             -e MLFLOW_TRACKING_URI=${{ secrets.MLFLOW_TRACKING_URI }} \
             -e PORT=8000 \
-            ${{ secrets.AWS_ECR_LOGIN_URI }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest
+            ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest
 
       - name: Clean Previous Images and Containers
         run: |
