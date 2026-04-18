@@ -62,7 +62,7 @@ jobs:
   continuous-deployment:
     name: Continuous Deployment
     needs: build-and-push-ecr-image
-    runs-on: self-hosted   # ✅ changed from ubuntu-latest
+    runs-on: ubuntu-latest   # ✅ changed from ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v3
