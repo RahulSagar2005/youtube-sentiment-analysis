@@ -2,7 +2,8 @@ import matplotlib
 matplotlib.use('Agg')
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
-import io
+import io 
+import requests
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud
 import mlflow
@@ -85,7 +86,29 @@ model, vectorizer = load_model_and_vectorizer('tfidf_vectorizer.pkl')
 @app.route('/')
 def home():
     return "Welcome to the YouTube Sentiment Analysis API! Use the /predict endpoint to analyze comments."
+@app.route('/comments')
+def get_comments():
+    video_id = request.args.get("video_id")
+    page_token = request.args.get("pageToken", "")  # ✅ NEW
 
+    if not video_id:
+        return jsonify({"error": "No video_id provided"}), 400
+
+    url = "https://www.googleapis.com/youtube/v3/commentThreads"
+
+    params = {
+        "part": "snippet",
+        "videoId": video_id,
+        "key": "AIzaSyD6zn4W7Ql24xF3yzhtI6sN1lTjFunwJm0",
+        "maxResults": 100,
+        "pageToken": page_token   # ✅ NEW (IMPORTANT)
+    }
+
+    try:
+        response = requests.get(url, params=params)
+        return jsonify(response.json())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/health')
 def health():

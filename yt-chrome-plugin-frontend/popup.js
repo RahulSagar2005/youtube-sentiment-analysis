@@ -1,45 +1,49 @@
 document.addEventListener("DOMContentLoaded", async () => {
     const outputDiv = document.getElementById("output");
-    const API_KEY = 'AIzaSyD6zn4W7Ql24xF3yzhtI6sN1lTjFunwJm0';
-    const API_URL = "http://52.90.160.63:8000";  // ✅ EC2 server
+    const API_URL = "https://ytsentimentapi.duckdns.org";// ✅ EC2 server
 
     // Fetch comments from YouTube Data API
     async function fetchComment(videoID) {
-        try {
-            let comments = [];
-            let nextPageToken = '';
-            const maxPages = 5;
-            let page = 0;
+    try {
+        let comments = [];
+        let nextPageToken = '';
+        const maxPages = 5;
+        let page = 0;
 
-            while (page < maxPages) {
-                const url = `https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&videoId=${videoID}&maxResults=100&pageToken=${nextPageToken}&key=${API_KEY}`;
-                const response = await fetch(url);
-                const data = await response.json();
+        while (page < maxPages) {
 
-                if (!data.items || data.items.length === 0) break;
+            // ✅ Call YOUR backend (not YouTube directly)
+            const url = `${API_URL}/comments?video_id=${videoID}&pageToken=${nextPageToken}`;
 
-                data.items.forEach((item) => {
-                    const snippet = item.snippet.topLevelComment.snippet;
-                    comments.push({
-                        text: snippet.textDisplay,
-                        timestamp: snippet.publishedAt,
-                        authorId: snippet.authorChannelId?.value || 'unknown',
-                        likeCount: snippet.likeCount || 0
-                    });
+            const response = await fetch(url);
+            const data = await response.json();
+
+            if (!data.items || data.items.length === 0) break;
+
+            data.items.forEach((item) => {
+                const snippet = item.snippet.topLevelComment.snippet;
+                comments.push({
+                    text: snippet.textDisplay,
+                    timestamp: snippet.publishedAt,
+                    authorId: snippet.authorChannelId?.value || 'unknown',
+                    likeCount: snippet.likeCount || 0
                 });
+            });
 
-                nextPageToken = data.nextPageToken || '';
-                if (!nextPageToken) break;
-                page++;
-            }
+            nextPageToken = data.nextPageToken || '';
+            if (!nextPageToken) break;
 
-            return comments;
-        } catch (error) {
-            console.error("Error fetching comments:", error);
-            outputDiv.innerHTML += `<p style="color:red;">Error fetching comments: ${error.message}</p>`;
-            return [];
+            page++;
         }
+
+        return comments;
+
+    } catch (error) {
+        console.error("Error fetching comments:", error);
+        outputDiv.innerHTML += `<p style="color:red;">Error fetching comments: ${error.message}</p>`;
+        return [];
     }
+}
 
     // Send comments to Flask API for sentiment prediction
     async function getSentimentPredictions(comments) {
