@@ -1,33 +1,20 @@
 document.addEventListener("DOMContentLoaded", async () => {
     const outputDiv = document.getElementById("output");
-    const API_URL = "https://ytsentimentapi.duckdns.org"; // ✅ Your EC2 backend
+    const API_KEY = 'AIzaSyD6zn4W7Ql24xF3yzhtI6sN1lTjFunwJm0';
+    const API_URL = "https://ytsentimentapi.duckdns.org";
 
-    // Fetch comments via your backend (API key stays server-side)
+    // Fetch comments from YouTube Data API
     async function fetchComment(videoID) {
         try {
             let comments = [];
             let nextPageToken = '';
-            const maxPages = 5;
+            const maxPages = 5; // fetch up to 5 pages = 500 comments
             let page = 0;
 
             while (page < maxPages) {
-                // ✅ Only append pageToken if it's non-empty
-                let url = `${API_URL}/comments?video_id=${videoID}`;
-                if (nextPageToken) {
-                    url += `&pageToken=${encodeURIComponent(nextPageToken)}`;
-                }
-
+                const url = `https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&videoId=${videoID}&maxResults=100&pageToken=${nextPageToken}&key=${API_KEY}`;
                 const response = await fetch(url);
-
-                if (!response.ok) {
-                    throw new Error(`Server error: ${response.status}`);
-                }
-
                 const data = await response.json();
-
-                if (data.error) {
-                    throw new Error(data.error);
-                }
 
                 if (!data.items || data.items.length === 0) break;
 
@@ -36,19 +23,16 @@ document.addEventListener("DOMContentLoaded", async () => {
                     comments.push({
                         text: snippet.textDisplay,
                         timestamp: snippet.publishedAt,
-                        authorId: snippet.authorChannelId?.value || 'unknown',
-                        likeCount: snippet.likeCount || 0
+                        authorId: snippet.authorChannelId?.value || 'unknown'
                     });
                 });
 
                 nextPageToken = data.nextPageToken || '';
                 if (!nextPageToken) break;
-
                 page++;
             }
 
             return comments;
-
         } catch (error) {
             console.error("Error fetching comments:", error);
             outputDiv.innerHTML += `<p style="color:red;">Error fetching comments: ${error.message}</p>`;
@@ -59,7 +43,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     // Send comments to Flask API for sentiment prediction
     async function getSentimentPredictions(comments) {
         try {
-            const response = await fetch(`${API_URL}/predict`, {
+            const response = await fetch(`${API_URL}/predict_with_timestamps`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -82,7 +66,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
     }
 
-    // Fetch and display pie chart
+    // Fetch and display pie chart from Flask API
     async function fetchAndDisplayChart(sentimentCounts) {
         try {
             const response = await fetch(`${API_URL}/generate_chart`, {
@@ -107,7 +91,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
     }
 
-    // Fetch and display word cloud
+    // Fetch and display word cloud from Flask API
     async function fetchAndDisplayWordCloud(comments) {
         try {
             const response = await fetch(`${API_URL}/generate_wordcloud`, {
@@ -132,20 +116,13 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
     }
 
-    // Fetch and display trend graph
+    // Fetch and display trend graph from Flask API
     async function fetchAndDisplayTrendGraph(sentimentData) {
         try {
-            const validData = sentimentData.filter(d => d.timestamp && d.timestamp !== '');
-
-            if (validData.length === 0) {
-                outputDiv.innerHTML += `<p style="color:orange;">Not enough timestamped data for trend graph.</p>`;
-                return;
-            }
-
             const response = await fetch(`${API_URL}/generate_trend_graph`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ sentiments: validData })
+                body: JSON.stringify({ sentiments: sentimentData })
             });
 
             if (!response.ok) throw new Error(`Trend graph API error: ${response.status}`);
@@ -155,7 +132,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             outputDiv.innerHTML += `
                 <div class="section">
                     <div class="section-title">Sentiment Trend Over Time</div>
-                    <img src="${imgUrl}" alt="Trend Graph" style="width:100%; border-radius:6px;"/>
+                    <img src="${imgUrl}" alt="Trend Graph"/>
                 </div>
             `;
         } catch (error) {
@@ -164,45 +141,36 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
     }
 
-    // Display top 25 comments with colour-coded sentiment badges
-    function displayTop25Comments(predictions) {
-        const sentimentMeta = (s) => {
-            const val = parseInt(s);
-            if (val === 1)  return { text: 'Positive', color: '#00cc66', bg: '#003311', icon: '😊' };
-            if (val === -1) return { text: 'Negative', color: '#ff4444', bg: '#330000', icon: '😠' };
-            return { text: 'Neutral', color: '#cccccc', bg: '#2a2a2a', icon: '😐' };
-        };
+    // Display top comments by sentiment
+    function displayTopComments(predictions) {
+        const positive = predictions.filter((p) => parseInt(p.sentiment) === 1).slice(0, 3);
+        const negative = predictions.filter((p) => parseInt(p.sentiment) === -1).slice(0, 3);
 
-        const top25 = predictions.slice(0, 25);
-
-        const rows = top25.map((item, index) => {
-            const meta = sentimentMeta(item.sentiment);
-            // Strip HTML tags for safe display
-            const cleanComment = item.comment.replace(/<[^>]*>/g, '').trim();
+        const renderComments = (items, label, color) => {
+            if (items.length === 0) return '';
             return `
-                <div class="top-comment-row">
-                    <div class="top-comment-index">${index + 1}</div>
-                    <div class="top-comment-text">${cleanComment}</div>
-                    <div class="top-comment-badge" style="color:${meta.color}; background:${meta.bg}; border: 1px solid ${meta.color};">
-                        ${meta.icon} ${meta.text}
-                    </div>
+                <div class="section">
+                    <div class="section-title" style="color:${color};">${label}</div>
+                    <ul class="comment-list">
+                        ${items.map((item) => `
+                            <li class="comment-item">
+                                <span class="comment-sentiment">${label}:</span>
+                                ${item.comment}
+                            </li>
+                        `).join('')}
+                    </ul>
                 </div>
             `;
-        }).join('');
+        };
 
-        outputDiv.innerHTML += `
-            <div class="section">
-                <div class="section-title">Top 25 Comments — Sentiment</div>
-                <div class="top-comments-container">
-                    ${rows}
-                </div>
-            </div>
-        `;
+        outputDiv.innerHTML += renderComments(positive, 'Positive', '#00cc66');
+        outputDiv.innerHTML += renderComments(negative, 'Negative', '#ff4444');
     }
 
     // Main flow
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
         const url = tabs[0].url;
+
         const youtubeRegex = /^https:\/\/(?:www\.)?youtube\.com\/watch\?v=([\w-]{11})/;
         const match = url.match(youtubeRegex);
 
@@ -229,27 +197,31 @@ document.addEventListener("DOMContentLoaded", async () => {
             if (predictions) {
                 const sentimentCounts = { "1": 0, "0": 0, "-1": 0 };
                 const sentimentData = [];
-                let totalSentimentScore = 0;
+
+                const totalSentimentScore = predictions.reduce(
+                    (sum, item) => sum + parseInt(item.sentiment),
+                    0
+                );
 
                 predictions.forEach((item) => {
-                    const s = parseInt(item.sentiment);
-                    sentimentCounts[String(item.sentiment)] = (sentimentCounts[String(item.sentiment)] || 0) + 1;
-                    totalSentimentScore += s;
-
-                    if (item.timestamp) {
-                        sentimentData.push({ timestamp: item.timestamp, sentiment: s });
-                    }
+                    sentimentCounts[String(item.sentiment)]++;
+                    sentimentData.push({
+                        timestamp: item.timestamp,
+                        sentiment: parseInt(item.sentiment)
+                    });
                 });
 
                 const totalComments = comments.length;
                 const uniqueCommenters = new Set(comments.map((c) => c.authorId)).size;
                 const totalWords = comments.reduce(
-                    (sum, c) => sum + c.text.split(/\s+/).filter((w) => w.length > 0).length, 0
+                    (sum, c) => sum + c.text.split(/\s+/).filter((word) => word.length > 0).length,
+                    0
                 );
                 const avgWordLength = (totalWords / totalComments).toFixed(2);
                 const avgSentimentScore = (totalSentimentScore / totalComments).toFixed(2);
                 const normalizedSentimentScore = (((parseFloat(avgSentimentScore) + 1) / 2) * 10).toFixed(2);
 
+                // Display metrics
                 outputDiv.innerHTML += `
                     <div class="section">
                         <div class="section-title">Comment Analysis Summary</div>
@@ -274,10 +246,11 @@ document.addEventListener("DOMContentLoaded", async () => {
                     </div>
                 `;
 
+                // Display all visuals and comments
                 await fetchAndDisplayChart(sentimentCounts);
                 await fetchAndDisplayWordCloud(comments);
                 await fetchAndDisplayTrendGraph(sentimentData);
-                displayTop25Comments(predictions);
+                displayTopComments(predictions);
             }
         } else {
             outputDiv.innerHTML = `<p>Not a valid YouTube video page.</p>`;

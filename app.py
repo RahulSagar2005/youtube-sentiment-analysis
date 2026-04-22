@@ -3,21 +3,24 @@ matplotlib.use('Agg')
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import io
-import requests
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud
+import mlflow
 import numpy as np
 import re
 import pandas as pd
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
+from mlflow.tracking import MlflowClient
 import matplotlib.dates as mdates
 import pickle
+import json
 import os
 
 app = Flask(__name__)
 CORS(app)
 
+# Download NLTK data on startup
 import nltk
 nltk.download('stopwords', quiet=True)
 nltk.download('wordnet', quiet=True)
@@ -25,11 +28,6 @@ nltk.download('punkt', quiet=True)
 
 STOP_WORDS = set(stopwords.words('english')) - {'not', 'but', 'however', 'no', 'yet'}
 lemmatizer = WordNetLemmatizer()
-
-# ✅ Load API key from environment variable (never hardcode it)
-YOUTUBE_API_KEY = os.environ.get('YOUTUBE_API_KEY')
-if not YOUTUBE_API_KEY:
-    raise RuntimeError("YOUTUBE_API_KEY environment variable is not set. Please set it before starting the server.")
 
 
 def preprocess_comment(comment):
@@ -47,61 +45,46 @@ def preprocess_comment(comment):
         return comment
 
 
-def load_model_and_vectorizer():
-    """Load model and vectorizer directly from pkl files."""
+def load_model_and_vectorizer(vectorizer_path):
+    """Load the model using run_id from experiment_info.json and vectorizer from local file."""
     try:
-        with open('/app/lgbm_model.pkl', 'rb') as f:
-            model = pickle.load(f)
+        # Get MLflow tracking URI from environment variable (set in Docker) or use default
+        mlflow_uri = os.environ.get('MLFLOW_TRACKING_URI', 'http://localhost:5000')
+        mlflow.set_tracking_uri(mlflow_uri)
+
+        with open('experiment_info.json', 'r') as f:
+            model_info = json.load(f)
+
+        run_id = model_info['run_id']
+        model_uri = f"runs:/{run_id}/lgbm_model"
+        print(f"Loading model from URI: {model_uri}")
+        model = mlflow.pyfunc.load_model(model_uri)
         print("Model loaded successfully")
 
-        with open('/app/tfidf_vectorizer.pkl', 'rb') as f:
-            vectorizer = pickle.load(f)
+        with open(vectorizer_path, 'rb') as file:
+            vectorizer = pickle.load(file)
         print("Vectorizer loaded successfully")
 
         return model, vectorizer
+
+    except FileNotFoundError:
+        print("experiment_info.json not found - run the DVC pipeline first")
+        raise
+    except KeyError:
+        print("run_id not found in experiment_info.json - check the file contents")
+        raise
     except Exception as e:
         print(f"Error loading model or vectorizer: {e}")
         raise
 
 
 # Load model and vectorizer at startup
-model, vectorizer = load_model_and_vectorizer()
+model, vectorizer = load_model_and_vectorizer('tfidf_vectorizer.pkl')
 
 
 @app.route('/')
 def home():
     return "Welcome to the YouTube Sentiment Analysis API! Use the /predict endpoint to analyze comments."
-
-
-@app.route('/comments')
-def get_comments():
-    """Proxy endpoint to fetch YouTube comments using server-side API key."""
-    video_id = request.args.get("video_id")
-    page_token = request.args.get("pageToken", "")
-
-    if not video_id:
-        return jsonify({"error": "No video_id provided"}), 400
-
-    url = "https://www.googleapis.com/youtube/v3/commentThreads"
-    params = {
-        "part": "snippet",
-        "videoId": video_id,
-        "key": YOUTUBE_API_KEY,   # ✅ Key is never sent to the client
-        "maxResults": 100,
-    }
-
-    # ✅ Only include pageToken if it's not empty
-    if page_token:
-        params["pageToken"] = page_token
-
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        return jsonify(response.json())
-    except requests.exceptions.HTTPError as e:
-        return jsonify({"error": f"YouTube API error: {response.status_code}", "details": response.text}), response.status_code
-    except requests.exceptions.RequestException as e:
-        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/health')
@@ -112,7 +95,7 @@ def health():
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    """Predict sentiment for comments."""
+    """Predict sentiment for comments. Handles both plain strings and dicts with text/timestamp."""
     data = request.get_json()
     comments_input = data.get('comments')
     print("Received comments input type:", type(comments_input))
@@ -142,7 +125,11 @@ def predict():
         return jsonify({'error': f'Error during prediction: {e}'}), 500
 
     response = [
-        {"comment": comment, "sentiment": sentiment, "timestamp": timestamp}
+        {
+            "comment": comment,
+            "sentiment": sentiment,
+            "timestamp": timestamp
+        }
         for comment, sentiment, timestamp in zip(comments_text, predictions, timestamps)
     ]
     return jsonify(response)
@@ -158,9 +145,11 @@ def predict_with_timestamps():
     try:
         comments = [item['text'] for item in comments_data]
         timestamps = [item['timestamp'] for item in comments_data]
+
         preprocessed_comments = [preprocess_comment(comment) for comment in comments]
         transformed_comments = vectorizer.transform(preprocessed_comments)
         dense_comments = transformed_comments.toarray()
+
         input_df = pd.DataFrame(dense_comments, columns=vectorizer.get_feature_names_out())
         predictions = model.predict(input_df)
         predictions = [str(int(p)) for p in predictions]
@@ -194,14 +183,21 @@ def generate_chart():
 
         colors = ['#36A2EB', '#C9CBCF', '#FF6384']
         plt.figure(figsize=(6, 6))
-        plt.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%',
-                startangle=140, textprops={'color': 'w'})
+        plt.pie(
+            sizes,
+            labels=labels,
+            colors=colors,
+            autopct='%1.1f%%',
+            startangle=140,
+            textprops={'color': 'w'}
+        )
         plt.axis('equal')
 
         img_io = io.BytesIO()
         plt.savefig(img_io, format='png', transparent=True)
         img_io.seek(0)
         plt.close()
+
         return send_file(img_io, mimetype='image/png')
     except Exception as e:
         app.logger.error(f'Error generating chart: {e}')
@@ -220,8 +216,11 @@ def generate_wordcloud():
         preprocessed_comments = [preprocess_comment(comment) for comment in comments]
         text = ' '.join(preprocessed_comments)
         wordcloud = WordCloud(
-            width=800, height=400, background_color='white',
-            colormap='viridis', stopwords=set(stopwords.words('english')),
+            width=800,
+            height=400,
+            background_color='white',
+            colormap='viridis',
+            stopwords=set(stopwords.words('english')),
             collocations=False
         ).generate(text)
 
@@ -249,6 +248,7 @@ def generate_trend_graph():
         df['sentiment'] = df['sentiment'].astype(int)
 
         sentiment_labels = {-1: 'Negative', 0: 'Neutral', 1: 'Positive'}
+
         monthly_counts = df.resample('ME')['sentiment'].value_counts().unstack(fill_value=0)
         monthly_totals = monthly_counts.sum(axis=1)
         monthly_percentages = (monthly_counts.T / monthly_totals).T * 100
@@ -258,13 +258,19 @@ def generate_trend_graph():
                 monthly_percentages[sentiment_value] = 0
 
         monthly_percentages = monthly_percentages[[-1, 0, 1]]
+
         plt.figure(figsize=(12, 6))
         colors = {-1: 'red', 0: 'gray', 1: 'green'}
 
         for sentiment_value in [-1, 0, 1]:
-            plt.plot(monthly_percentages.index, monthly_percentages[sentiment_value],
-                     marker='o', linestyle='-', label=sentiment_labels[sentiment_value],
-                     color=colors[sentiment_value])
+            plt.plot(
+                monthly_percentages.index,
+                monthly_percentages[sentiment_value],
+                marker='o',
+                linestyle='-',
+                label=sentiment_labels[sentiment_value],
+                color=colors[sentiment_value]
+            )
 
         plt.title('Monthly Sentiment Percentage Over Time')
         plt.xlabel('Month')
@@ -280,6 +286,7 @@ def generate_trend_graph():
         plt.savefig(img_io, format='PNG')
         img_io.seek(0)
         plt.close()
+
         return send_file(img_io, mimetype='image/png')
     except Exception as e:
         app.logger.error(f"Error in /generate_trend_graph: {e}")
@@ -287,5 +294,6 @@ def generate_trend_graph():
 
 
 if __name__ == '__main__':
+    # For Docker: bind to 0.0.0.0 and use port from environment or default to 5000
     port = int(os.environ.get('PORT', 8000))
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
