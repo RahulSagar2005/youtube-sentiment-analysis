@@ -1,49 +1,60 @@
 document.addEventListener("DOMContentLoaded", async () => {
     const outputDiv = document.getElementById("output");
-    const API_URL = "https://ytsentimentapi.duckdns.org";// ✅ EC2 server
+    const API_URL = "https://ytsentimentapi.duckdns.org"; // ✅ Your EC2 backend
 
-    // Fetch comments from YouTube Data API
+    // Fetch comments via your backend (API key stays server-side)
     async function fetchComment(videoID) {
-    try {
-        let comments = [];
-        let nextPageToken = '';
-        const maxPages = 5;
-        let page = 0;
+        try {
+            let comments = [];
+            let nextPageToken = '';
+            const maxPages = 5;
+            let page = 0;
 
-        while (page < maxPages) {
+            while (page < maxPages) {
+                // ✅ Only append pageToken if it's non-empty
+                let url = `${API_URL}/comments?video_id=${videoID}`;
+                if (nextPageToken) {
+                    url += `&pageToken=${encodeURIComponent(nextPageToken)}`;
+                }
 
-            // ✅ Call YOUR backend (not YouTube directly)
-            const url = `${API_URL}/comments?video_id=${videoID}&pageToken=${nextPageToken}`;
+                const response = await fetch(url);
 
-            const response = await fetch(url);
-            const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(`Server error: ${response.status}`);
+                }
 
-            if (!data.items || data.items.length === 0) break;
+                const data = await response.json();
 
-            data.items.forEach((item) => {
-                const snippet = item.snippet.topLevelComment.snippet;
-                comments.push({
-                    text: snippet.textDisplay,
-                    timestamp: snippet.publishedAt,
-                    authorId: snippet.authorChannelId?.value || 'unknown',
-                    likeCount: snippet.likeCount || 0
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                if (!data.items || data.items.length === 0) break;
+
+                data.items.forEach((item) => {
+                    const snippet = item.snippet.topLevelComment.snippet;
+                    comments.push({
+                        text: snippet.textDisplay,
+                        timestamp: snippet.publishedAt,
+                        authorId: snippet.authorChannelId?.value || 'unknown',
+                        likeCount: snippet.likeCount || 0
+                    });
                 });
-            });
 
-            nextPageToken = data.nextPageToken || '';
-            if (!nextPageToken) break;
+                nextPageToken = data.nextPageToken || '';
+                if (!nextPageToken) break;
 
-            page++;
+                page++;
+            }
+
+            return comments;
+
+        } catch (error) {
+            console.error("Error fetching comments:", error);
+            outputDiv.innerHTML += `<p style="color:red;">Error fetching comments: ${error.message}</p>`;
+            return [];
         }
-
-        return comments;
-
-    } catch (error) {
-        console.error("Error fetching comments:", error);
-        outputDiv.innerHTML += `<p style="color:red;">Error fetching comments: ${error.message}</p>`;
-        return [];
     }
-}
 
     // Send comments to Flask API for sentiment prediction
     async function getSentimentPredictions(comments) {
@@ -121,7 +132,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
     }
 
-    // ✅ Fetch and display trend graph — filters invalid timestamps before sending
+    // Fetch and display trend graph
     async function fetchAndDisplayTrendGraph(sentimentData) {
         try {
             const validData = sentimentData.filter(d => d.timestamp && d.timestamp !== '');
@@ -153,7 +164,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
     }
 
-    // ✅ NEW: Display top 25 comments with colour-coded sentiment badges
+    // Display top 25 comments with colour-coded sentiment badges
     function displayTop25Comments(predictions) {
         const sentimentMeta = (s) => {
             const val = parseInt(s);
@@ -265,8 +276,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                 await fetchAndDisplayChart(sentimentCounts);
                 await fetchAndDisplayWordCloud(comments);
-                await fetchAndDisplayTrendGraph(sentimentData);   // ✅ Trend graph
-                displayTop25Comments(predictions);                 // ✅ Top 25 comments
+                await fetchAndDisplayTrendGraph(sentimentData);
+                displayTop25Comments(predictions);
             }
         } else {
             outputDiv.innerHTML = `<p>Not a valid YouTube video page.</p>`;
